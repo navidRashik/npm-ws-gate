@@ -1,0 +1,33 @@
+name: npm-ws infection gate
+description: >
+  Blocks builds/PRs carrying the npm-ws (PolinRider) implant: extended
+  marker union (npm cli.js hook M260630A, variant-1/2/3 caches, family-B
+  C2-resolver loader, family-C live loader, font loader, bare dead-drop
+  value), payload-named files (init/.orc/config.bat), .vscode/tasks.json
+  font-exec persistence triggers, .gitignore .env/.vscode un-ignore tamper,
+  and package.json "node init &&" hijacks. Optional pickaxe scan of every
+  commit added by the push.
+author: navidRashik
+branding:
+  icon: shield
+  color: red
+
+inputs:
+  base-ref:
+    description: "Base ref for the pickaxe diff scan (empty = working tree only)"
+    required: false
+    default: ""
+  path:
+    description: "Repository path to scan"
+    required: false
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      id: gate
+      run: |
+        ${{ github.action_path }}/npm-ws-ci-gate.sh \
+          "${{ inputs.path }}" \
+          ${{ inputs.base-ref != '' && format('--base {0}', inputs.base-ref) || '' }}

@@ -1,0 +1,93 @@
+# npm-ws CI/CD Gate — reusable GitHub Actions workflow
+# v1.0 (2026-11-18)
+#
+# INSTALLATION NOTE (2026-11-18): pushing anything under .github/workflows/*
+# requires a token with **workflow** scope — none of the current tokens have it
+# (same blocker as the zealve-ci GITHUB_SHA patch). This file is STAGED and
+# ready; installation is gated on that PAT. The LOCAL pre-push hook
+# (install-prepush-hooks.sh) needs no GitHub scopes and is live on this Mac.
+#
+# Two pieces:
+#   1. This reusable workflow (workflow_call) — copy to a central repo, e.g.
+#      ZEALVE-LTD/.github or the org's infra repo, and reference it.
+#   2. A 5-line caller per repo (snippet at the bottom).
+#
+# The gate script (npm-ws-ci-gate.sh) lives next to this file or in the
+# caller repo; the workflow checks it out from the shared repo.
+
+name: npm-ws infection gate
+
+on:
+  workflow_call:
+    inputs:
+      base_ref:
+        description: "Base ref for pickaxe diff scan (default: PR base or previous commit)"
+        required: false
+        type: string
+        default: ""
+      run_osv:
+        description: "Also run osv-scanner dependency-vulnerability check"
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  npm-ws-gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # pickaxe needs full history for --base scans
+
+      # The gate is a single audited shell script — pin it by SHA for supply
+      # chain safety (replace with the actual pinned ref after first push).
+      - name: Fetch gate script
+        run: |
+          curl -fsSL -o npm-ws-ci-gate.sh \
+            https://raw.githubusercontent.com/navidRashik/npm-ws-gate/main/npm-ws-ci-gate.sh
+          echo "PIN ME: sha256sum npm-ws-ci-gate.sh and hard-code 'sha256sum -c' here"
+          chmod +x npm-ws-ci-gate.sh
+
+      - name: npm-ws marker gate (working tree + payload files + triggers + gitignore)
+        run: ./npm-ws-ci-gate.sh . --base "${{ inputs.base_ref || github.event.pull_request.base.sha || format('refs/remotes/origin/{0}', github.event.repository.default_branch) }}"
+
+      - name: osv-scanner (dependency vulnerabilities — open source, google/osv-scanner)
+        if: ${{ inputs.run_osv }}
+        uses: google/osv-scanner-action/osv-scanner-action@v2
+        continue-on-error: true   # advisory first; flip to blocking after a shakedown week
+        with:
+          scan-args: |-
+            --format=table
+            --recursive
+            ./
+
+      - name: Upload gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-ws-gate-report
+          path: |
+            npm-ws-gate-*.txt
+            osv-scanner-report.txt
+          if-no-files-found: ignore
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CALLER — add this to each repo as .github/workflows/npm-ws-gate.yml
+# (requires workflow scope to push; see installation note above):
+#
+# name: npm-ws gate
+# on: [push, pull_request]
+# jobs:
+#   gate:
+#     uses: navidRashik/npm-ws-gate/.github/workflows/npm-ws-gate.yml@main
+#     with:
+#       base_ref: ""            # empty = auto (PR base or default branch)
+#
+# BLOCKING SEMANTICS: the gate step exits 1 on any finding → the job fails →
+# branch protection on the default branch blocks the merge. Pair with
+# Settings → Branches → Require status checks (free-plan note: branch
+# protection is unavailable on private repos on the free plan — 61 of ours are
+# affected; public repos can enable it today).
+# ─────────────────────────────────────────────────────────────────────────────
